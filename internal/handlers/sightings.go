@@ -8,19 +8,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/YemetsValen/go-kafka-proj/internal/kafka"
 	"github.com/YemetsValen/go-kafka-proj/internal/models"
 	"github.com/YemetsValen/go-kafka-proj/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
-type Handler struct {
-	store    *store.Memory
-	producer *kafka.Producer
+// Publisher is the minimal surface we need from a Kafka producer.
+// Decoupling via an interface keeps handlers trivially testable.
+type Publisher interface {
+	Publish(ctx context.Context, key string, eventType string, payload interface{}) error
 }
 
-func New(s *store.Memory, p *kafka.Producer) *Handler {
+type Handler struct {
+	store    *store.Memory
+	producer Publisher
+}
+
+func New(s *store.Memory, p Publisher) *Handler {
 	return &Handler{store: s, producer: p}
 }
 
