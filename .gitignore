@@ -1,0 +1,11 @@
+bin/
+*.exe
+*.test
+*.out
+.env
+.DS_Store
+/server
+/tmp/
+
+# Generated gRPC bindings — produced by `buf generate`.
+/gen/
