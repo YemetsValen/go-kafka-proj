@@ -1,0 +1,205 @@
+syntax = "proto3";
+
+package sightings.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/field_mask.proto";
+
+option go_package = "github.com/YemetsValen/go-kafka-proj/gen/go/sightings/v1;sightingsv1";
+
+// SightingService is a gRPC API for the Wildlife Sightings Log.
+//
+// In addition to standard CRUD it exposes:
+//   * Watch       — server-streaming feed of sighting events (created / updated /
+//                   noted / verified / deleted). Useful for live dashboards.
+//   * BulkCreate  — client-streaming bulk ingest, e.g. from a field journal export.
+//   * Chat        — bidirectional collaborative annotation channel between
+//                   multiple observers looking at the same sighting.
+service SightingService {
+  // ---- CRUD ----
+  rpc CreateSighting (CreateSightingRequest) returns (CreateSightingResponse);
+  rpc GetSighting    (GetSightingRequest)    returns (GetSightingResponse);
+  rpc ListSightings  (ListSightingsRequest)  returns (ListSightingsResponse);
+  rpc UpdateSighting (UpdateSightingRequest) returns (UpdateSightingResponse);
+  rpc DeleteSighting (DeleteSightingRequest) returns (DeleteSightingResponse);
+
+  // ---- Domain ops that also publish to Kafka ----
+  rpc VerifySighting (VerifySightingRequest) returns (VerifySightingResponse);
+  rpc AddNote        (AddNoteRequest)        returns (AddNoteResponse);
+
+  // ---- Streaming (the "interesting" bits) ----
+
+  // Watch returns a server-side stream of every event happening on sightings.
+  // Implemented behind the scenes as a Kafka consumer subscribed to the
+  // wildlife.sightings topic.
+  rpc Watch (WatchRequest) returns (stream WatchResponse);
+
+  // BulkCreate ingests many sightings in a single client-streaming call and
+  // returns a summary at the end. Useful when uploading a CSV / journal.
+  rpc BulkCreate (stream BulkCreateRequest) returns (BulkCreateResponse);
+
+  // Chat is a bidirectional stream tied to a single sighting: any observer
+  // viewing it can post messages and receive the others' messages live.
+  // Each message is also fan-out to Kafka as `sighting.chat`.
+  rpc Chat (stream ChatRequest) returns (stream ChatResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Domain types
+// ---------------------------------------------------------------------------
+
+message Sighting {
+  string id = 1;
+  string species = 2;
+  string location = 3;
+  GeoPoint position = 4;
+  string observed_by = 5;
+  google.protobuf.Timestamp observed_at = 6;
+  repeated Note notes = 7;
+  bool verified = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message GeoPoint {
+  double latitude = 1;
+  double longitude = 2;
+}
+
+message Note {
+  string author = 1;
+  string text = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+// ---------------------------------------------------------------------------
+// CRUD requests / responses
+// ---------------------------------------------------------------------------
+
+message CreateSightingRequest {
+  string species = 1;
+  string location = 2;
+  GeoPoint position = 3;
+  string observed_by = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+message CreateSightingResponse {
+  Sighting sighting = 1;
+}
+
+message GetSightingRequest {
+  string id = 1;
+}
+
+message GetSightingResponse {
+  Sighting sighting = 1;
+}
+
+message ListSightingsRequest {
+  // Optional filters. Empty = no filter.
+  string species_filter = 1;
+  bool only_verified = 2;
+
+  // Pagination.
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListSightingsResponse {
+  repeated Sighting sightings = 1;
+  string next_page_token = 2;
+  int32 total = 3;
+}
+
+message UpdateSightingRequest {
+  Sighting sighting = 1;
+  // Which fields of `sighting` to apply. If empty, all non-zero fields are applied.
+  google.protobuf.FieldMask update_mask = 2;
+}
+
+message UpdateSightingResponse {
+  Sighting sighting = 1;
+}
+
+message DeleteSightingRequest {
+  string id = 1;
+}
+
+message DeleteSightingResponse {}
+
+message VerifySightingRequest {
+  string id = 1;
+  string verified_by = 2;
+}
+
+message VerifySightingResponse {
+  Sighting sighting = 1;
+}
+
+message AddNoteRequest {
+  string sighting_id = 1;
+  Note note = 2;
+}
+
+message AddNoteResponse {
+  Sighting sighting = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Streaming messages
+// ---------------------------------------------------------------------------
+
+message WatchRequest {
+  // Optionally limit the stream to events about a single sighting.
+  string sighting_id = 1;
+  // Replay history before tailing live.
+  bool from_beginning = 2;
+}
+
+message WatchResponse {
+  EventType type = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  Sighting sighting = 3;
+  // Set only for NOTE_ADDED events.
+  Note note = 4;
+}
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_CREATED = 1;
+  EVENT_TYPE_UPDATED = 2;
+  EVENT_TYPE_NOTE_ADDED = 3;
+  EVENT_TYPE_VERIFIED = 4;
+  EVENT_TYPE_DELETED = 5;
+}
+
+message BulkCreateRequest {
+  CreateSightingRequest sighting = 1;
+}
+
+message BulkCreateResponse {
+  int32 received = 1;
+  int32 created = 2;
+  int32 failed = 3;
+  repeated BulkCreateError errors = 4;
+}
+
+message BulkCreateError {
+  int32 index = 1;
+  string reason = 2;
+}
+
+message ChatRequest {
+  string sighting_id = 1;
+  string author = 2;
+  string text = 3;
+  google.protobuf.Timestamp sent_at = 4;
+}
+
+message ChatResponse {
+  string sighting_id = 1;
+  string author = 2;
+  string text = 3;
+  google.protobuf.Timestamp sent_at = 4;
+}
