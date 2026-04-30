@@ -37,5 +37,15 @@ services:
       timeout: 5s
       retries: 10
 
+  # Optional OpenTelemetry collector for local tracing — enable with
+  # `docker compose --profile otel up`.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.110.0
+    profiles: ["otel"]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "4318:4318"  # OTLP HTTP
+      - "4317:4317"  # OTLP gRPC
+
 volumes:
   postgres_data:
