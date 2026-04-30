@@ -1,0 +1,3 @@
+This directory is populated at build time with the output of `npm run build`
+in the web/ workspace. Keep this placeholder so go:embed can locate the dir
+at compile time even when the frontend hasn't been built yet.
