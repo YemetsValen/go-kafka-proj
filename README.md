@@ -54,19 +54,64 @@ Wildlife Sightings Log — a small Go service that lets observers record wildlif
 | PUT    | `/sightings/{id}`            | Update fields (species, location, coordinates, …)  | —                       |
 | PUT    | `/sightings/{id}/verify`     | Mark a sighting as verified                        | `sighting.verified`     |
 
-Plus `GET /healthz` for liveness.
+Plus operational endpoints:
+
+- `GET /healthz` — liveness (always 200 if process is up).
+- `GET /readyz` — readiness; pings Postgres (when configured) and dials the first Kafka broker. Returns 503 with a per-check breakdown when something is down.
+- `GET /metrics` (on `METRICS_ADDR`, `:9100` by default) — Prometheus metrics for HTTP request counts/latency, Kafka publish/consume results, and runtime/process collectors.
 
 ## Configuration (env)
 
-| Variable        | Default              | Description                                                                       |
-| --------------- | -------------------- | --------------------------------------------------------------------------------- |
-| `HTTP_ADDR`     | `:8080`              | HTTP listen address                                                               |
-| `GRPC_ADDR`     | `:9090`              | gRPC listen address                                                               |
-| `KAFKA_BROKERS` | `localhost:9092`     | Comma-separated Kafka bootstrap                                                   |
-| `KAFKA_TOPIC`   | `wildlife.sightings` | Topic for all events                                                              |
-| `DATABASE_URL`  | _(unset)_            | Postgres DSN. If empty, the service falls back to an in-memory store (no persistence). |
-| `AUTH_JWT_SECRET` | _(unset)_          | HS256 shared secret used to validate `Authorization: Bearer <jwt>`. |
-| `AUTH_API_KEYS` | _(unset)_            | Comma-separated list of static API keys accepted as `Authorization: Bearer <key>`. |
+Config is parsed by [`kelseyhightower/envconfig`](https://github.com/kelseyhightower/envconfig). A `.env` file in the working directory is auto-loaded for local development.
+
+### Service
+
+| Variable        | Default                | Description                                                                       |
+| --------------- | ---------------------- | --------------------------------------------------------------------------------- |
+| `HTTP_ADDR`     | `:8080`                | HTTP listen address                                                               |
+| `GRPC_ADDR`     | `:9090`                | gRPC listen address                                                               |
+| `METRICS_ADDR`  | `:9100`                | Prometheus `/metrics` listener                                                    |
+| `SERVICE_NAME`  | `wildlife-sightings`   | Service name used in logs and tracing                                             |
+| `ENV`           | `dev`                  | Deployment environment label (used in trace resource attributes)                  |
+
+### Kafka
+
+| Variable                | Default                          | Description                                          |
+| ----------------------- | -------------------------------- | ---------------------------------------------------- |
+| `KAFKA_BROKERS`         | `localhost:9092`                 | Comma-separated bootstrap brokers                    |
+| `KAFKA_TOPIC`           | `wildlife.sightings`             | Topic name (producer + consumer)                     |
+| `KAFKA_CONSUMER_GROUP`  | `wildlife-sightings-consumer`    | Consumer group ID for `cmd/consumer`                 |
+| `KAFKA_DIAL_TIMEOUT`    | `5s`                             | Timeout for the readyz Kafka dial                    |
+
+### Postgres
+
+| Variable                | Default        | Description                                                                            |
+| ----------------------- | -------------- | -------------------------------------------------------------------------------------- |
+| `DATABASE_URL`          | _(unset)_      | Postgres DSN. If empty the **server** falls back to in-memory storage; the **consumer** requires it. |
+| `DATABASE_MAX_CONNS`    | `10`           | Pool max connections                                                                   |
+| `DATABASE_PING_TIMEOUT` | `3s`           | Per-check timeout for `/readyz` Postgres ping                                          |
+
+### Auth
+
+| Variable          | Default      | Description                                                                          |
+| ----------------- | ------------ | ------------------------------------------------------------------------------------ |
+| `AUTH_JWT_SECRET` | _(unset)_    | HS256 shared secret used to validate `Authorization: Bearer <jwt>`                   |
+| `AUTH_API_KEYS`   | _(unset)_    | Comma-separated list of static API keys accepted as `Authorization: Bearer <key>`    |
+
+### Logging
+
+| Variable      | Default | Description                                                              |
+| ------------- | ------- | ------------------------------------------------------------------------ |
+| `LOG_LEVEL`   | `info`  | One of `debug`, `info`, `warn`, `error`                                  |
+| `LOG_FORMAT`  | `json`  | `json` (production) or `text` (human-readable, dev)                      |
+
+### OpenTelemetry
+
+| Variable                          | Default | Description                                                                                       |
+| --------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`     | _(unset)_ | Host:port of an OTLP/HTTP collector. When unset, a no-op tracer is used and traces are dropped. |
+| `OTEL_EXPORTER_OTLP_INSECURE`     | `true`  | Skip TLS when talking to the collector                                                            |
+| `OTEL_TRACES_SAMPLER_ARG`         | `1.0`   | TraceID-ratio sampler argument (0.0–1.0)                                                          |
 
 ## Running locally
 
@@ -202,9 +247,16 @@ curl -sS -X PUT http://localhost:8080/sightings/<id>/verify
 {
   "type": "sighting.created",
   "timestamp": "2026-04-26T05:30:01Z",
+  "metadata": {
+    "request_id": "f1c4...",
+    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+  },
   "payload": { "... full sighting ..." }
 }
 ```
+
+W3C `traceparent` is also written into Kafka message headers, so the
+`cmd/consumer` reuses the same trace context when it persists each event.
 
 Consume messages for debugging:
 
@@ -214,3 +266,25 @@ docker compose exec kafka kafka-console-consumer \
   --topic wildlife.sightings \
   --from-beginning
 ```
+
+## Consumer
+
+`cmd/consumer` is a separate binary that reads `wildlife.sightings`, parses the JSON envelope, restores the trace context from the message headers, and persists every event into the Postgres `events` table for analytics. Like the server it exposes Prometheus metrics on `METRICS_ADDR` and writes structured slog records.
+
+Run locally (alongside `cmd/server`):
+
+```bash
+DATABASE_URL=postgres://wildlife:wildlife@localhost:5432/wildlife?sslmode=disable \
+KAFKA_BROKERS=localhost:9092 \
+KAFKA_CONSUMER_GROUP=wildlife-sightings-consumer \
+METRICS_ADDR=:9101 \
+  go run ./cmd/consumer
+```
+
+Rows are written to `events (id, event_type, sighting_id, payload jsonb, request_id, trace_id, occurred_at, received_at)`.
+
+## Observability
+
+- **Logs** — every record carries `service`, plus `request_id` (from chi `RequestID`) and `trace_id` (from the active OpenTelemetry span) when present, so a single `request_id` traces an HTTP call → Kafka publish → consumer write.
+- **Metrics** — `wildlife_http_requests_total{method,route,status}`, `wildlife_http_request_duration_seconds_bucket`, `wildlife_kafka_publish_total{event_type,result}`, `wildlife_kafka_consume_total{event_type,result}`, plus the Go runtime/process collectors.
+- **Tracing** — HTTP and gRPC servers are wrapped with `otelhttp` / `otelgrpc`. The Kafka producer creates a producer span and injects W3C tracecontext into headers; the consumer extracts it and creates a child span. Point `OTEL_EXPORTER_OTLP_ENDPOINT` at any OTLP/HTTP collector (Tempo, Jaeger, OTel Collector) to see the full HTTP → Kafka → consumer waterfall.
