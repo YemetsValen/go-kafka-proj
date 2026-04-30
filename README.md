@@ -1,13 +1,16 @@
 # go-kafka-proj
 
-Wildlife Sightings Log — a small Go service that lets observers record wildlife sightings over HTTP and streams each event to Kafka for downstream processing (analytics, notifications, etc.).
+Wildlife Sightings Log — a small Go service that lets observers record wildlife sightings over HTTP **and** gRPC and streams each event to Kafka for downstream processing (analytics, notifications, etc.).
 
 ## Stack
 
-- **Go** 1.23
-- **Router:** [go-chi/chi](https://github.com/go-chi/chi) on top of the standard `net/http`
+- **Go** 1.23+ (toolchain auto-bumps if needed)
+- **HTTP router:** [go-chi/chi](https://github.com/go-chi/chi) on top of the standard `net/http`
+- **gRPC:** [google.golang.org/grpc](https://pkg.go.dev/google.golang.org/grpc) — `SightingService` with CRUD + 3 streaming RPCs (`Watch`, `BulkCreate`, `Chat`)
 - **Kafka client:** [segmentio/kafka-go](https://github.com/segmentio/kafka-go)
-- **Storage:** in-memory (for demo purposes)
+- **Storage:** Postgres via [pgx/v5](https://github.com/jackc/pgx) (in-memory fallback when `DATABASE_URL` is unset)
+- **Migrations:** embedded SQL files run via [goose](https://github.com/pressly/goose) on startup
+- **Proto tooling:** [buf](https://buf.build) (`buf lint`, `buf generate`)
 
 ## Project layout
 
@@ -15,19 +18,27 @@ Wildlife Sightings Log — a small Go service that lets observers record wildlif
 .
 ├── cmd/
 │   └── server/
-│       └── main.go            # entrypoint: HTTP server + graceful shutdown
+│       └── main.go            # entrypoint: HTTP + gRPC servers, graceful shutdown
 ├── internal/
-│   ├── handlers/
-│   │   ├── sightings.go       # HTTP handlers (GET/POST/PUT)
-│   │   └── sightings_test.go  # HTTP tests with httptest + mock Publisher
-│   ├── kafka/
-│   │   └── producer.go        # Kafka producer wrapper
-│   ├── models/
-│   │   └── sighting.go        # domain types
+│   ├── db/
+│   │   ├── db.go              # pgxpool + embedded goose migrations
+│   │   └── migrations/        # *.sql, embedded into the binary
+│   ├── grpcsvc/
+│   │   ├── server.go          # SightingService gRPC implementation
+│   │   ├── broadcast.go       # in-process pub/sub for Watch/Chat
+│   │   └── server_test.go     # gRPC tests over bufconn
+│   ├── handlers/              # HTTP handlers (GET/POST/PUT) + tests
+│   ├── kafka/                 # Kafka producer wrapper
+│   ├── models/                # domain types
 │   └── store/
-│       ├── memory.go          # in-memory repository
-│       └── memory_test.go     # unit tests
-├── docker-compose.yml         # Zookeeper + Kafka for local development
+│       ├── store.go           # Store interface + ListFilter / ListResult
+│       ├── memory.go          # in-memory implementation
+│       ├── postgres.go        # pgx/v5 implementation
+│       └── *_test.go          # unit + (skipped-by-default) integration tests
+├── proto/sightings/v1/        # protobuf service definition
+├── gen/go/sightings/v1/       # generated Go bindings (buf generate)
+├── docker-compose.yml         # Kafka + Postgres for local development
+├── buf.gen.yaml
 ├── go.mod
 └── README.md
 ```
@@ -47,24 +58,50 @@ Plus `GET /healthz` for liveness.
 
 ## Configuration (env)
 
-| Variable        | Default              | Description                        |
-| --------------- | -------------------- | ---------------------------------- |
-| `HTTP_ADDR`     | `:8080`              | HTTP listen address                |
-| `KAFKA_BROKERS` | `localhost:9092`     | Comma-separated Kafka bootstrap    |
-| `KAFKA_TOPIC`   | `wildlife.sightings` | Topic for all events               |
+| Variable        | Default              | Description                                                                       |
+| --------------- | -------------------- | --------------------------------------------------------------------------------- |
+| `HTTP_ADDR`     | `:8080`              | HTTP listen address                                                               |
+| `GRPC_ADDR`     | `:9090`              | gRPC listen address                                                               |
+| `KAFKA_BROKERS` | `localhost:9092`     | Comma-separated Kafka bootstrap                                                   |
+| `KAFKA_TOPIC`   | `wildlife.sightings` | Topic for all events                                                              |
+| `DATABASE_URL`  | _(unset)_            | Postgres DSN. If empty, the service falls back to an in-memory store (no persistence). |
 
 ## Running locally
 
-Start Kafka:
+Start Kafka and Postgres:
 
 ```bash
 docker compose up -d
 ```
 
-Run the server:
+Run the server with Postgres:
 
 ```bash
-go run ./cmd/server
+DATABASE_URL=postgres://wildlife:wildlife@localhost:5432/wildlife?sslmode=disable \
+  go run ./cmd/server
+```
+
+Migrations run automatically at startup (goose, embedded SQL).
+
+Without `DATABASE_URL` the server starts with an in-memory store — handy for quick demos, but state is lost on restart.
+
+### gRPC quickstart
+
+```bash
+# list services (server reflection is enabled)
+grpcurl -plaintext localhost:9090 list
+
+# create a sighting
+grpcurl -plaintext -d '{
+  "species": "Red Fox",
+  "location": "Carpathians",
+  "position": {"latitude": 48.5, "longitude": 24.5},
+  "observed_by": "ranger"
+}' localhost:9090 sightings.v1.SightingService/CreateSighting
+
+# tail the live event stream
+grpcurl -plaintext -d '{"from_beginning": true}' \
+  localhost:9090 sightings.v1.SightingService/Watch
 ```
 
 ## Tests
@@ -73,7 +110,19 @@ go run ./cmd/server
 go test ./...
 ```
 
-Handlers are tested with `net/http/httptest` against a mock `Publisher`, so the test suite does **not** require a running Kafka broker. The store is covered with unit tests including a concurrent-writes check.
+What runs by default (no Kafka, no Postgres):
+
+- HTTP handler tests via `net/http/httptest` with a mock `Publisher`.
+- In-memory store unit tests, including a 100-goroutine concurrent-writes check.
+- gRPC server tests over an in-process `bufconn` listener — exercise CRUD, Verify/AddNote, BulkCreate (client-streaming) and Watch (server-streaming).
+
+The Postgres integration test in `internal/store/postgres_test.go` is skipped unless `POSTGRES_TEST_DSN` is set:
+
+```bash
+docker compose up -d postgres
+POSTGRES_TEST_DSN=postgres://wildlife:wildlife@localhost:5432/wildlife?sslmode=disable \
+  go test ./internal/store/... -run TestPostgres
+```
 
 ## Example requests
 

@@ -21,11 +21,11 @@ type Publisher interface {
 }
 
 type Handler struct {
-	store    *store.Memory
+	store    store.Store
 	producer Publisher
 }
 
-func New(s *store.Memory, p Publisher) *Handler {
+func New(s store.Store, p Publisher) *Handler {
 	return &Handler{store: s, producer: p}
 }
 
@@ -41,12 +41,21 @@ func (h *Handler) Routes() chi.Router {
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, h.store.List())
+	res, err := h.store.List(r.Context(), store.ListFilter{
+		Species:      r.URL.Query().Get("species"),
+		OnlyVerified: r.URL.Query().Get("verified") == "true",
+		PageToken:    r.URL.Query().Get("page_token"),
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res.Sightings)
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	s, err := h.store.Get(id)
+	s, err := h.store.Get(r.Context(), id)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -76,7 +85,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		ObservedBy: req.ObservedBy,
 		ObservedAt: req.ObservedAt,
 	}
-	saved := h.store.Create(s)
+	saved, err := h.store.Create(r.Context(), s)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
@@ -102,7 +115,7 @@ func (h *Handler) AddNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	note := models.Note{Author: req.Author, Text: req.Text, CreatedAt: time.Now().UTC()}
-	saved, err := h.store.AddNote(id, note)
+	saved, err := h.store.AddNote(r.Context(), id, note)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -124,7 +137,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	saved, err := h.store.Update(id, func(s *models.Sighting) {
+	saved, err := h.store.Update(r.Context(), id, func(s *models.Sighting) {
 		if req.Species != nil {
 			s.Species = *req.Species
 		}
@@ -153,7 +166,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Verify(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	saved, err := h.store.Update(id, func(s *models.Sighting) {
+	saved, err := h.store.Update(r.Context(), id, func(s *models.Sighting) {
 		s.Verified = true
 	})
 	if err != nil {

@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -22,9 +24,12 @@ func newSighting(id, species string) models.Sighting {
 }
 
 func TestMemory_CreateAndGet(t *testing.T) {
+	ctx := context.Background()
 	m := NewMemory()
-	saved := m.Create(newSighting("s1", "Red Fox"))
-
+	saved, err := m.Create(ctx, newSighting("s1", "Red Fox"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
 	if saved.CreatedAt.IsZero() {
 		t.Fatalf("expected CreatedAt to be set")
 	}
@@ -32,7 +37,7 @@ func TestMemory_CreateAndGet(t *testing.T) {
 		t.Errorf("expected UpdatedAt == CreatedAt on create, got %v vs %v", saved.UpdatedAt, saved.CreatedAt)
 	}
 
-	got, err := m.Get("s1")
+	got, err := m.Get(ctx, "s1")
 	if err != nil {
 		t.Fatalf("Get returned error: %v", err)
 	}
@@ -43,29 +48,31 @@ func TestMemory_CreateAndGet(t *testing.T) {
 
 func TestMemory_GetNotFound(t *testing.T) {
 	m := NewMemory()
-	_, err := m.Get("missing")
+	_, err := m.Get(context.Background(), "missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
 
 func TestMemory_List(t *testing.T) {
+	ctx := context.Background()
 	m := NewMemory()
-	if got := m.List(); len(got) != 0 {
-		t.Errorf("expected empty list, got %d", len(got))
+	res, _ := m.List(ctx, ListFilter{})
+	if len(res.Sightings) != 0 {
+		t.Errorf("expected empty list, got %d", len(res.Sightings))
 	}
 
-	m.Create(newSighting("s1", "Red Fox"))
-	m.Create(newSighting("s2", "Gray Wolf"))
-	m.Create(newSighting("s3", "European Lynx"))
+	_, _ = m.Create(ctx, newSighting("s1", "Red Fox"))
+	_, _ = m.Create(ctx, newSighting("s2", "Gray Wolf"))
+	_, _ = m.Create(ctx, newSighting("s3", "European Lynx"))
 
-	got := m.List()
-	if len(got) != 3 {
-		t.Fatalf("expected 3 sightings, got %d", len(got))
+	res, _ = m.List(ctx, ListFilter{})
+	if len(res.Sightings) != 3 || res.Total != 3 {
+		t.Fatalf("expected 3 sightings, got %d (total=%d)", len(res.Sightings), res.Total)
 	}
 
 	seen := map[string]bool{}
-	for _, s := range got {
+	for _, s := range res.Sightings {
 		seen[s.ID] = true
 	}
 	for _, id := range []string{"s1", "s2", "s3"} {
@@ -75,14 +82,58 @@ func TestMemory_List(t *testing.T) {
 	}
 }
 
-func TestMemory_Update(t *testing.T) {
+func TestMemory_List_FiltersAndPaging(t *testing.T) {
+	ctx := context.Background()
 	m := NewMemory()
-	m.Create(newSighting("s1", "Red Fox"))
+	for i := 0; i < 7; i++ {
+		s := newSighting("s"+strconv.Itoa(i), "Red Fox")
+		if i%2 == 0 {
+			s.Verified = true
+		}
+		_, _ = m.Create(ctx, s)
+		// ensure distinct CreatedAt ordering
+		time.Sleep(time.Millisecond)
+	}
+	_, _ = m.Create(ctx, newSighting("w1", "Gray Wolf"))
 
-	// Force a measurable difference between CreatedAt and UpdatedAt.
+	// species filter (case-insensitive)
+	res, _ := m.List(ctx, ListFilter{Species: "red fox"})
+	if len(res.Sightings) != 7 {
+		t.Errorf("species filter: got %d, want 7", len(res.Sightings))
+	}
+
+	// only_verified
+	res, _ = m.List(ctx, ListFilter{OnlyVerified: true})
+	for _, s := range res.Sightings {
+		if !s.Verified {
+			t.Errorf("only_verified returned non-verified id=%s", s.ID)
+		}
+	}
+
+	// paging
+	page1, _ := m.List(ctx, ListFilter{PageSize: 3})
+	if len(page1.Sightings) != 3 {
+		t.Fatalf("page 1: got %d", len(page1.Sightings))
+	}
+	if page1.NextPageToken == "" {
+		t.Fatalf("page 1: expected next token")
+	}
+	page2, _ := m.List(ctx, ListFilter{PageSize: 3, PageToken: page1.NextPageToken})
+	if len(page2.Sightings) != 3 {
+		t.Errorf("page 2: got %d", len(page2.Sightings))
+	}
+	if page2.Sightings[0].ID == page1.Sightings[0].ID {
+		t.Errorf("page 2 starts with same item as page 1")
+	}
+}
+
+func TestMemory_Update(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemory()
+	_, _ = m.Create(ctx, newSighting("s1", "Red Fox"))
 	time.Sleep(2 * time.Millisecond)
 
-	updated, err := m.Update("s1", func(s *models.Sighting) {
+	updated, err := m.Update(ctx, "s1", func(s *models.Sighting) {
 		s.Species = "Arctic Fox"
 		s.Verified = true
 	})
@@ -102,18 +153,35 @@ func TestMemory_Update(t *testing.T) {
 
 func TestMemory_UpdateNotFound(t *testing.T) {
 	m := NewMemory()
-	_, err := m.Update("missing", func(s *models.Sighting) {})
+	_, err := m.Update(context.Background(), "missing", func(s *models.Sighting) {})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
 
-func TestMemory_AddNote(t *testing.T) {
+func TestMemory_Delete(t *testing.T) {
+	ctx := context.Background()
 	m := NewMemory()
-	m.Create(newSighting("s1", "Red Fox"))
+	_, _ = m.Create(ctx, newSighting("s1", "Red Fox"))
+
+	if err := m.Delete(ctx, "s1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := m.Get(ctx, "s1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound after Delete, got %v", err)
+	}
+	if err := m.Delete(ctx, "s1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound on second Delete, got %v", err)
+	}
+}
+
+func TestMemory_AddNote(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemory()
+	_, _ = m.Create(ctx, newSighting("s1", "Red Fox"))
 
 	note := models.Note{Author: "ranger", Text: "looked healthy", CreatedAt: time.Now().UTC()}
-	saved, err := m.AddNote("s1", note)
+	saved, err := m.AddNote(ctx, "s1", note)
 	if err != nil {
 		t.Fatalf("AddNote returned error: %v", err)
 	}
@@ -124,17 +192,17 @@ func TestMemory_AddNote(t *testing.T) {
 		t.Errorf("unexpected note: %+v", saved.Notes[0])
 	}
 
-	// Second note should append, not overwrite.
-	if _, err := m.AddNote("s1", models.Note{Author: "bio", Text: "tagged"}); err != nil {
+	if _, err := m.AddNote(ctx, "s1", models.Note{Author: "bio", Text: "tagged"}); err != nil {
 		t.Fatalf("second AddNote failed: %v", err)
 	}
-	got, _ := m.Get("s1")
+	got, _ := m.Get(ctx, "s1")
 	if len(got.Notes) != 2 {
 		t.Errorf("expected 2 notes after second add, got %d", len(got.Notes))
 	}
 }
 
 func TestMemory_ConcurrentWrites(t *testing.T) {
+	ctx := context.Background()
 	m := NewMemory()
 	const n = 100
 	var wg sync.WaitGroup
@@ -142,27 +210,13 @@ func TestMemory_ConcurrentWrites(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func(i int) {
 			defer wg.Done()
-			id := "s" + itoa(i)
-			m.Create(newSighting(id, "Species"))
+			id := "s" + strconv.Itoa(i)
+			_, _ = m.Create(ctx, newSighting(id, "Species"))
 		}(i)
 	}
 	wg.Wait()
-	if got := len(m.List()); got != n {
-		t.Errorf("expected %d sightings after concurrent Create, got %d", n, got)
+	res, _ := m.List(ctx, ListFilter{PageSize: 200})
+	if got := res.Total; got != n {
+		t.Errorf("expected total=%d sightings after concurrent Create, got %d", n, got)
 	}
-}
-
-// itoa avoids importing strconv just for this test file.
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	pos := len(buf)
-	for i > 0 {
-		pos--
-		buf[pos] = byte('0' + i%10)
-		i /= 10
-	}
-	return string(buf[pos:])
 }

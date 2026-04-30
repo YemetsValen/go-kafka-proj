@@ -6,6 +6,3 @@ bin/
 .DS_Store
 /server
 /tmp/
-
-# Generated gRPC bindings — produced by `buf generate`.
-/gen/
