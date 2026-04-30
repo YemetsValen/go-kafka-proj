@@ -16,9 +16,9 @@ import (
 
 // mockPublisher records every Publish call and optionally returns a preset error.
 type mockPublisher struct {
-	mu     sync.Mutex
-	calls  []mockCall
-	errOn  map[string]error // eventType -> error to return
+	mu    sync.Mutex
+	calls []mockCall
+	errOn map[string]error // eventType -> error to return
 }
 
 type mockCall struct {

@@ -1,0 +1,46 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+  exclusions:
+    paths:
+      # Generated proto bindings — not our code, leave them alone.
+      - gen
+    rules:
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - errcheck
+          - gosec
+  settings:
+    gosec:
+      excludes:
+        # G104: errors not checked. Fire-and-forget Publish/broadcast paths
+        # use `_ = ...` intentionally; errcheck handles the rest.
+        - G104
+    revive:
+      rules:
+        - name: var-naming
+        - name: package-comments
+          disabled: true
+        - name: exported
+          disabled: true
+
+formatters:
+  enable:
+    - gofmt

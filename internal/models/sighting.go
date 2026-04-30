@@ -3,17 +3,17 @@ package models
 import "time"
 
 type Sighting struct {
-	ID          string    `json:"id"`
-	Species     string    `json:"species"`
-	Location    string    `json:"location"`
-	Latitude    float64   `json:"latitude"`
-	Longitude   float64   `json:"longitude"`
-	ObservedBy  string    `json:"observed_by"`
-	ObservedAt  time.Time `json:"observed_at"`
-	Notes       []Note    `json:"notes,omitempty"`
-	Verified    bool      `json:"verified"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	Species    string    `json:"species"`
+	Location   string    `json:"location"`
+	Latitude   float64   `json:"latitude"`
+	Longitude  float64   `json:"longitude"`
+	ObservedBy string    `json:"observed_by"`
+	ObservedAt time.Time `json:"observed_at"`
+	Notes      []Note    `json:"notes,omitempty"`
+	Verified   bool      `json:"verified"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type Note struct {
