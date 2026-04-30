@@ -164,8 +164,8 @@ func TestListSightings_Empty(t *testing.T) {
 
 func TestListSightings_AfterCreate(t *testing.T) {
 	h, s, _ := setup(t)
-	s.Create(models.Sighting{ID: "a", Species: "Red Fox"})
-	s.Create(models.Sighting{ID: "b", Species: "Lynx"})
+	s.Create(context.Background(), models.Sighting{ID: "a", Species: "Red Fox"})
+	s.Create(context.Background(), models.Sighting{ID: "b", Species: "Lynx"})
 
 	rr := doJSON(t, h, http.MethodGet, "/", "")
 	if rr.Code != http.StatusOK {
@@ -184,7 +184,7 @@ func TestListSightings_AfterCreate(t *testing.T) {
 
 func TestGetSighting_Found(t *testing.T) {
 	h, s, _ := setup(t)
-	s.Create(models.Sighting{ID: "abc", Species: "Red Fox"})
+	s.Create(context.Background(), models.Sighting{ID: "abc", Species: "Red Fox"})
 
 	rr := doJSON(t, h, http.MethodGet, "/abc", "")
 	if rr.Code != http.StatusOK {
@@ -208,7 +208,7 @@ func TestGetSighting_NotFound(t *testing.T) {
 
 func TestAddNote_Success(t *testing.T) {
 	h, s, pub := setup(t)
-	s.Create(models.Sighting{ID: "abc", Species: "Red Fox"})
+	s.Create(context.Background(), models.Sighting{ID: "abc", Species: "Red Fox"})
 
 	rr := doJSON(t, h, http.MethodPost, "/abc/notes", `{"author":"rama","text":"moving north"}`)
 	if rr.Code != http.StatusCreated {
@@ -226,7 +226,7 @@ func TestAddNote_Success(t *testing.T) {
 
 func TestAddNote_MissingFields(t *testing.T) {
 	h, s, pub := setup(t)
-	s.Create(models.Sighting{ID: "abc", Species: "Red Fox"})
+	s.Create(context.Background(), models.Sighting{ID: "abc", Species: "Red Fox"})
 
 	rr := doJSON(t, h, http.MethodPost, "/abc/notes", `{"author":"","text":""}`)
 	if rr.Code != http.StatusBadRequest {
@@ -249,7 +249,7 @@ func TestAddNote_NotFound(t *testing.T) {
 
 func TestUpdateSighting_PartialUpdate(t *testing.T) {
 	h, s, _ := setup(t)
-	s.Create(models.Sighting{ID: "abc", Species: "Red Fox", Location: "Forest", Latitude: 48.0, Longitude: 24.0})
+	s.Create(context.Background(), models.Sighting{ID: "abc", Species: "Red Fox", Location: "Forest", Latitude: 48.0, Longitude: 24.0})
 
 	rr := doJSON(t, h, http.MethodPut, "/abc", `{"latitude": 49.1}`)
 	if rr.Code != http.StatusOK {
@@ -274,7 +274,7 @@ func TestUpdateSighting_NotFound(t *testing.T) {
 
 func TestUpdateSighting_InvalidJSON(t *testing.T) {
 	h, s, _ := setup(t)
-	s.Create(models.Sighting{ID: "abc", Species: "Red Fox"})
+	s.Create(context.Background(), models.Sighting{ID: "abc", Species: "Red Fox"})
 
 	rr := doJSON(t, h, http.MethodPut, "/abc", `not json`)
 	if rr.Code != http.StatusBadRequest {
@@ -286,7 +286,7 @@ func TestUpdateSighting_InvalidJSON(t *testing.T) {
 
 func TestVerifySighting_Success(t *testing.T) {
 	h, s, pub := setup(t)
-	s.Create(models.Sighting{ID: "abc", Species: "Red Fox"})
+	s.Create(context.Background(), models.Sighting{ID: "abc", Species: "Red Fox"})
 
 	rr := doJSON(t, h, http.MethodPut, "/abc/verify", "")
 	if rr.Code != http.StatusOK {
