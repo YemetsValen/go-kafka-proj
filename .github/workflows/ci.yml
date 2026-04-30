@@ -1,0 +1,108 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::These files are not gofmt-clean:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.11.4
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: wildlife
+          POSTGRES_PASSWORD: wildlife
+          POSTGRES_DB: wildlife
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wildlife -d wildlife"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_TEST_DSN: postgres://wildlife:wildlife@localhost:5432/wildlife?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test (race + coverage)
+        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: coverage summary
+        run: go tool cover -func=coverage.out | tail -20
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  proto:
+    name: proto
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+
+      - name: buf lint
+        working-directory: proto
+        run: buf lint
+
+      - name: buf build
+        working-directory: proto
+        run: buf build
+
+      - name: regenerate Go bindings and check for drift
+        run: |
+          buf generate
+          if ! git diff --quiet -- gen/; then
+            echo "::error::Generated bindings are out of date. Run 'buf generate' and commit gen/."
+            git --no-pager diff -- gen/
+            exit 1
+          fi
