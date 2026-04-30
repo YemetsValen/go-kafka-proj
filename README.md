@@ -65,6 +65,8 @@ Plus `GET /healthz` for liveness.
 | `KAFKA_BROKERS` | `localhost:9092`     | Comma-separated Kafka bootstrap                                                   |
 | `KAFKA_TOPIC`   | `wildlife.sightings` | Topic for all events                                                              |
 | `DATABASE_URL`  | _(unset)_            | Postgres DSN. If empty, the service falls back to an in-memory store (no persistence). |
+| `AUTH_JWT_SECRET` | _(unset)_          | HS256 shared secret used to validate `Authorization: Bearer <jwt>`. |
+| `AUTH_API_KEYS` | _(unset)_            | Comma-separated list of static API keys accepted as `Authorization: Bearer <key>`. |
 
 ## Running locally
 
@@ -102,6 +104,31 @@ grpcurl -plaintext -d '{
 # tail the live event stream
 grpcurl -plaintext -d '{"from_beginning": true}' \
   localhost:9090 sightings.v1.SightingService/Watch
+```
+
+## Authentication
+
+Mutating endpoints (`POST /sightings`, `POST /sightings/{id}/notes`, `PUT /sightings/{id}`, `PUT /sightings/{id}/verify`) and the corresponding mutating gRPC RPCs (`CreateSighting`, `UpdateSighting`, `DeleteSighting`, `VerifySighting`, `AddNote`, `BulkCreate`, `Chat`) require a bearer token. Read endpoints (`GET /sightings`, `GET /sightings/{id}`, `GetSighting`, `ListSightings`, `Watch`) stay public.
+
+Two token shapes are accepted, both via `Authorization: Bearer <token>` (HTTP) or the `authorization` metadata key (gRPC):
+
+- **JWT (HS256)** signed with `AUTH_JWT_SECRET`. Mint dev tokens with the bundled CLI:
+
+  ```bash
+  AUTH_JWT_SECRET=devsecret go run ./cmd/mintjwt -sub rama -exp 1h
+  ```
+
+- **Static API keys** listed in `AUTH_API_KEYS` (comma-separated). Useful for service-to-service callers that don't need per-user identity.
+
+If neither variable is set the verifier is **disabled** and a startup warning (`WARNING: auth is DISABLED`) is logged — handy for local hacking, never for production.
+
+Example call:
+
+```bash
+TOKEN=$(AUTH_JWT_SECRET=devsecret go run ./cmd/mintjwt -sub rama)
+curl -sS -X POST http://localhost:8080/sightings \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"species":"Red Fox","observed_by":"rama"}'
 ```
 
 ## Tests
