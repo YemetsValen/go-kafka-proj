@@ -55,7 +55,7 @@ func dial(t *testing.T) (pb.SightingServiceClient, *mockPublisher, func()) {
 	lis := bufconn.Listen(1024 * 1024)
 	pub := &mockPublisher{}
 	srv := grpc.NewServer()
-	pb.RegisterSightingServiceServer(srv, New(store.NewMemory(), pub))
+	pb.RegisterSightingServiceServer(srv, New(store.NewMemory(), pub, nil))
 	go func() { _ = srv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",

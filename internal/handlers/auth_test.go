@@ -12,7 +12,7 @@ import (
 
 func TestAuthMiddleware_Routing(t *testing.T) {
 	v := auth.New(auth.Config{APIKeys: []string{"svc"}})
-	h := New(store.NewMemory(), newMockPublisher()).Routes(v.HTTPMiddleware())
+	h := New(store.NewMemory(), newMockPublisher(), nil).Routes(v.HTTPMiddleware())
 
 	// GETs are public — no token, expect 200.
 	rec := httptest.NewRecorder()

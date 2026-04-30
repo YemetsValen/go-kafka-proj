@@ -57,7 +57,7 @@ func setup(t *testing.T) (http.Handler, *store.Memory, *mockPublisher) {
 	t.Helper()
 	s := store.NewMemory()
 	pub := newMockPublisher()
-	h := New(s, pub)
+	h := New(s, pub, nil)
 	return h.Routes(nil), s, pub
 }
 

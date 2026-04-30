@@ -6,3 +6,9 @@ bin/
 .DS_Store
 /server
 /tmp/
+
+# Frontend build artifacts
+web/node_modules/
+web/dist/
+internal/web/dist/*
+!internal/web/dist/.gitkeep

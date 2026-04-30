@@ -1,6 +1,19 @@
 # syntax=docker/dockerfile:1.7
 
-# ---------- builder ----------
+# ---------- web (frontend) ----------
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
+WORKDIR /web
+
+# Cache npm install separately so Go-only changes don't invalidate it.
+COPY web/package.json web/package-lock.json* ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
+
+COPY web/ ./
+RUN npm run build
+# /web/dist now contains the built SPA.
+
+# ---------- builder (Go) ----------
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 ARG TARGETOS
 ARG TARGETARCH
@@ -17,6 +30,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 # Copy the rest of the source.
 COPY . .
+
+# Drop the built SPA into the embed directory so the Go binary serves it.
+RUN rm -rf internal/web/dist
+COPY --from=web /web/dist internal/web/dist
 
 # Build both binaries into /out so the final stages can copy by name.
 RUN --mount=type=cache,target=/root/.cache/go-build \

@@ -23,7 +23,7 @@ func dialWithAuth(t *testing.T, v *auth.Verifier) (pb.SightingServiceClient, fun
 		grpc.UnaryInterceptor(v.UnaryInterceptor()),
 		grpc.StreamInterceptor(v.StreamInterceptor()),
 	)
-	pb.RegisterSightingServiceServer(srv, New(store.NewMemory(), &mockPublisher{}))
+	pb.RegisterSightingServiceServer(srv, New(store.NewMemory(), &mockPublisher{}, nil))
 	go func() { _ = srv.Serve(lis) }()
 
 	conn, err := grpc.NewClient("passthrough:///bufnet",

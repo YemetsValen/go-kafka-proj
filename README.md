@@ -224,6 +224,44 @@ curl -sS -X POST http://localhost:8080/sightings \
   -d '{"species":"Red Fox","observed_by":"rama"}'
 ```
 
+## Web UI
+
+A React/Leaflet single-page app lives in `web/`. It renders a map of all sightings, a live feed driven by Server-Sent Events, and a small form to add new sightings (the form uses the `Authorization: Bearer <key>` header — pre-populated with `dev` when running the `app` compose profile).
+
+The HTTP server exposes the SSE endpoint at:
+
+```
+GET /sightings/stream
+```
+
+It emits `created`, `updated`, `note_added`, `verified`, and `deleted` events whose `data:` payloads match the JSON shape of `internal/events.Event`. The stream is fed from the same in-process bus that drives the gRPC `Watch` RPC, so HTTP and gRPC clients see identical event order.
+
+### Frontend dev workflow
+
+```bash
+# 1. Run the Go server (in-memory store is fine for quick demos).
+AUTH_API_KEYS=dev go run ./cmd/server
+
+# 2. Run the Vite dev server with hot-reload — it proxies /sightings,
+#    /sightings/stream, /healthz, /readyz to the Go server on :8080.
+cd web
+npm install
+npm run dev
+# open http://localhost:5173
+```
+
+### Production build (embedded in the server binary)
+
+```bash
+cd web && npm run build
+cp -r dist ../internal/web/dist   # the Go binary embeds this directory
+cd .. && go build -o /tmp/server ./cmd/server
+/tmp/server
+# open http://localhost:8080
+```
+
+The Docker image takes care of all of the above automatically — the multi-stage `Dockerfile` has a Node stage that runs `npm run build` and copies the output into `internal/web/dist/` before the Go build, so `docker compose --profile app up --build` Just Works.
+
 ## Tests
 
 ```bash

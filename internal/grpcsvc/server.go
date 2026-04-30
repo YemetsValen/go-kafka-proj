@@ -11,6 +11,7 @@ import (
 	"time"
 
 	pb "github.com/YemetsValen/go-kafka-proj/gen/go/sightings/v1"
+	"github.com/YemetsValen/go-kafka-proj/internal/events"
 	"github.com/YemetsValen/go-kafka-proj/internal/models"
 	"github.com/YemetsValen/go-kafka-proj/internal/store"
 	"github.com/google/uuid"
@@ -29,16 +30,21 @@ type Publisher interface {
 type Server struct {
 	pb.UnimplementedSightingServiceServer
 
-	store     store.Store
-	producer  Publisher
-	broadcast *Broadcast
+	store    store.Store
+	producer Publisher
+	bus      *events.Bus
+	chat     *chatBroadcast
 }
 
-func New(s store.Store, p Publisher) *Server {
+func New(s store.Store, p Publisher, bus *events.Bus) *Server {
+	if bus == nil {
+		bus = events.New()
+	}
 	return &Server{
-		store:     s,
-		producer:  p,
-		broadcast: NewBroadcast(),
+		store:    s,
+		producer: p,
+		bus:      bus,
+		chat:     newChatBroadcast(),
 	}
 }
 
@@ -67,7 +73,7 @@ func (s *Server) CreateSighting(ctx context.Context, req *pb.CreateSightingReque
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "create: %v", err)
 	}
-	s.publishAndBroadcast(ctx, "sighting.created", pb.EventType_EVENT_TYPE_CREATED, saved, nil)
+	s.publishAndBroadcast(ctx, "sighting.created", events.TypeCreated, saved, nil)
 	return &pb.CreateSightingResponse{Sighting: toProto(saved)}, nil
 }
 
@@ -149,7 +155,7 @@ func (s *Server) UpdateSighting(ctx context.Context, req *pb.UpdateSightingReque
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "update: %v", err)
 	}
-	s.publishAndBroadcast(ctx, "sighting.updated", pb.EventType_EVENT_TYPE_UPDATED, saved, nil)
+	s.publishAndBroadcast(ctx, "sighting.updated", events.TypeUpdated, saved, nil)
 	return &pb.UpdateSightingResponse{Sighting: toProto(saved)}, nil
 }
 
@@ -164,7 +170,7 @@ func (s *Server) DeleteSighting(ctx context.Context, req *pb.DeleteSightingReque
 	if err := s.store.Delete(ctx, req.GetId()); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete: %v", err)
 	}
-	s.publishAndBroadcast(ctx, "sighting.deleted", pb.EventType_EVENT_TYPE_DELETED, got, nil)
+	s.publishAndBroadcast(ctx, "sighting.deleted", events.TypeDeleted, got, nil)
 	return &pb.DeleteSightingResponse{}, nil
 }
 
@@ -178,7 +184,7 @@ func (s *Server) VerifySighting(ctx context.Context, req *pb.VerifySightingReque
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "verify: %v", err)
 	}
-	s.publishAndBroadcast(ctx, "sighting.verified", pb.EventType_EVENT_TYPE_VERIFIED, saved, nil)
+	s.publishAndBroadcast(ctx, "sighting.verified", events.TypeVerified, saved, nil)
 	return &pb.VerifySightingResponse{Sighting: toProto(saved)}, nil
 }
 
@@ -198,7 +204,7 @@ func (s *Server) AddNote(ctx context.Context, req *pb.AddNoteRequest) (*pb.AddNo
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "add note: %v", err)
 	}
-	s.publishAndBroadcast(ctx, "sighting.note_added", pb.EventType_EVENT_TYPE_NOTE_ADDED, saved, &note)
+	s.publishAndBroadcast(ctx, "sighting.note_added", events.TypeNoteAdded, saved, &note)
 	return &pb.AddNoteResponse{Sighting: toProto(saved)}, nil
 }
 
@@ -231,8 +237,8 @@ func (s *Server) Watch(req *pb.WatchRequest, stream grpc.ServerStreamingServer[p
 		}
 	}
 
-	sub := s.broadcast.Subscribe()
-	defer s.broadcast.Unsubscribe(sub)
+	sub := s.bus.Subscribe()
+	defer s.bus.Unsubscribe(sub)
 
 	for {
 		select {
@@ -242,10 +248,10 @@ func (s *Server) Watch(req *pb.WatchRequest, stream grpc.ServerStreamingServer[p
 			if !ok {
 				return nil
 			}
-			if req.GetSightingId() != "" && ev.GetSighting().GetId() != req.GetSightingId() {
+			if req.GetSightingId() != "" && ev.Sighting.ID != req.GetSightingId() {
 				continue
 			}
-			if err := stream.Send(ev); err != nil {
+			if err := stream.Send(eventToWatchResponse(ev)); err != nil {
 				return err
 			}
 		}
@@ -303,15 +309,15 @@ func (s *Server) BulkCreate(stream grpc.ClientStreamingServer[pb.BulkCreateReque
 			continue
 		}
 		created++
-		s.publishAndBroadcast(stream.Context(), "sighting.created", pb.EventType_EVENT_TYPE_CREATED, saved, nil)
+		s.publishAndBroadcast(stream.Context(), "sighting.created", events.TypeCreated, saved, nil)
 	}
 }
 
 func (s *Server) Chat(stream grpc.BidiStreamingServer[pb.ChatRequest, pb.ChatResponse]) error {
-	// One Chat call subscribes to the broadcast. Each ChatMessage from the
-	// client is also published to Kafka as `sighting.chat`.
-	sub := s.broadcast.SubscribeChat()
-	defer s.broadcast.UnsubscribeChat(sub)
+	// One Chat call subscribes to the chat broadcast. Each ChatMessage from
+	// the client is also published to Kafka as `sighting.chat`.
+	sub := s.chat.Subscribe()
+	defer s.chat.Unsubscribe(sub)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -350,7 +356,7 @@ func (s *Server) Chat(stream grpc.BidiStreamingServer[pb.ChatRequest, pb.ChatRes
 			Text:       in.GetText(),
 			SentAt:     timestamppb.Now(),
 		}
-		s.broadcast.PublishChat(out)
+		s.chat.Publish(out)
 		_ = s.producer.Publish(stream.Context(), in.GetSightingId(), "sighting.chat", out)
 	}
 
@@ -367,27 +373,50 @@ func (s *Server) Chat(stream grpc.BidiStreamingServer[pb.ChatRequest, pb.ChatRes
 // helpers
 // ---------------------------------------------------------------------------
 
-func (s *Server) publishAndBroadcast(ctx context.Context, kafkaType string, evType pb.EventType, sighting models.Sighting, note *models.Note) {
-	pbSighting := toProto(sighting)
+func (s *Server) publishAndBroadcast(ctx context.Context, kafkaType string, evType events.Type, sighting models.Sighting, note *models.Note) {
 	payload := map[string]interface{}{"sighting": sighting}
 	if note != nil {
 		payload["note"] = *note
 	}
 	_ = s.producer.Publish(ctx, sighting.ID, kafkaType, payload)
 
-	ev := &pb.WatchResponse{
+	s.bus.Publish(events.Event{
 		Type:      evType,
-		Timestamp: timestamppb.Now(),
-		Sighting:  pbSighting,
+		Timestamp: time.Now().UTC(),
+		Sighting:  sighting,
+		Note:      note,
+	})
+}
+
+func eventToWatchResponse(ev events.Event) *pb.WatchResponse {
+	var pbType pb.EventType
+	switch ev.Type {
+	case events.TypeCreated:
+		pbType = pb.EventType_EVENT_TYPE_CREATED
+	case events.TypeUpdated:
+		pbType = pb.EventType_EVENT_TYPE_UPDATED
+	case events.TypeNoteAdded:
+		pbType = pb.EventType_EVENT_TYPE_NOTE_ADDED
+	case events.TypeVerified:
+		pbType = pb.EventType_EVENT_TYPE_VERIFIED
+	case events.TypeDeleted:
+		pbType = pb.EventType_EVENT_TYPE_DELETED
+	default:
+		pbType = pb.EventType_EVENT_TYPE_UNSPECIFIED
 	}
-	if note != nil {
-		ev.Note = &pb.Note{
-			Author:    note.Author,
-			Text:      note.Text,
-			CreatedAt: timestamppb.New(note.CreatedAt),
+	out := &pb.WatchResponse{
+		Type:      pbType,
+		Timestamp: timestamppb.New(ev.Timestamp),
+		Sighting:  toProto(ev.Sighting),
+	}
+	if ev.Note != nil {
+		out.Note = &pb.Note{
+			Author:    ev.Note.Author,
+			Text:      ev.Note.Text,
+			CreatedAt: timestamppb.New(ev.Note.CreatedAt),
 		}
 	}
-	s.broadcast.Publish(ev)
+	return out
 }
 
 func toProto(s models.Sighting) *pb.Sighting {

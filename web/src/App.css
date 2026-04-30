@@ -1,0 +1,201 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  color: #1d1d1f;
+  background: #f5f6f8;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: #1f2937;
+  color: white;
+}
+
+.app-header h1 {
+  font-size: 1.05rem;
+  margin: 0;
+  margin-right: auto;
+  letter-spacing: 0.02em;
+}
+
+.pill {
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+.api-key {
+  width: 220px;
+  padding: 6px 10px;
+  border: 1px solid #4b5563;
+  background: #111827;
+  color: #f3f4f6;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.map-pane {
+  flex: 1 1 65%;
+  min-width: 0;
+  position: relative;
+}
+
+.map-pane .leaflet-container {
+  height: 100%;
+  width: 100%;
+}
+
+.side-pane {
+  width: 360px;
+  flex: 0 0 360px;
+  border-left: 1px solid #e5e7eb;
+  background: white;
+  overflow: auto;
+  padding: 18px 18px 30px;
+}
+
+.create-form h2,
+.feed-heading {
+  margin: 4px 0 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.feed-heading {
+  margin-top: 28px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 18px;
+}
+
+.create-form label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.78rem;
+  color: #4b5563;
+  margin-bottom: 10px;
+  gap: 4px;
+}
+
+.create-form input {
+  padding: 7px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.create-form .row {
+  display: flex;
+  gap: 10px;
+}
+
+.create-form .row label {
+  flex: 1;
+}
+
+.create-form button {
+  width: 100%;
+  padding: 9px 14px;
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.create-form button:hover {
+  background: #1d4ed8;
+}
+
+.error {
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 8px 10px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  font-size: 0.85rem;
+}
+
+.feed {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.feed-empty {
+  color: #6b7280;
+  font-style: italic;
+  font-size: 0.88rem;
+}
+
+.feed-item {
+  padding: 10px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.feed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.feed-item small {
+  color: #6b7280;
+  font-size: 0.78rem;
+}
+
+.verified-badge {
+  font-size: 0.65rem;
+  background: #ecfdf5;
+  color: #047857;
+  padding: 2px 6px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+@media (max-width: 700px) {
+  .app-body {
+    flex-direction: column;
+  }
+  .map-pane {
+    height: 50vh;
+    flex: 0 0 50vh;
+  }
+  .side-pane {
+    width: 100%;
+    flex: 1 1 auto;
+    border-left: none;
+    border-top: 1px solid #e5e7eb;
+  }
+}

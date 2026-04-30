@@ -15,12 +15,14 @@ import (
 	"github.com/YemetsValen/go-kafka-proj/internal/auth"
 	"github.com/YemetsValen/go-kafka-proj/internal/config"
 	"github.com/YemetsValen/go-kafka-proj/internal/db"
+	"github.com/YemetsValen/go-kafka-proj/internal/events"
 	"github.com/YemetsValen/go-kafka-proj/internal/grpcsvc"
 	"github.com/YemetsValen/go-kafka-proj/internal/handlers"
 	"github.com/YemetsValen/go-kafka-proj/internal/kafka"
 	"github.com/YemetsValen/go-kafka-proj/internal/logging"
 	"github.com/YemetsValen/go-kafka-proj/internal/observability"
 	"github.com/YemetsValen/go-kafka-proj/internal/store"
+	web "github.com/YemetsValen/go-kafka-proj/internal/web"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -76,8 +78,9 @@ func main() {
 		logger.Warn("auth is DISABLED — set AUTH_JWT_SECRET or AUTH_API_KEYS to enable")
 	}
 
-	httpHandler := handlers.New(st, producer)
-	grpcServer := newGRPCServer(st, producer, verifier)
+	bus := events.New()
+	httpHandler := handlers.New(st, producer, bus)
+	grpcServer := newGRPCServer(st, producer, verifier, bus)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -86,11 +89,17 @@ func main() {
 	r.Use(metrics.HTTPMiddleware())
 	r.Use(logging.HTTPMiddleware(logger))
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(15 * time.Second))
+	// NOTE: chi's middleware.Timeout uses http.TimeoutHandler which buffers
+	// the response and breaks long-lived streaming endpoints (SSE). Handlers
+	// own their own timeouts for downstream work (kafka publish, db calls).
 
 	r.Get("/healthz", observability.HealthHandler())
 	r.Get("/readyz", observability.ReadyHandler(readinessChecks(cfg, pool)))
 	r.Mount("/sightings", httpHandler.Routes(verifier.HTTPMiddleware()))
+	if ui := web.Handler(); ui != nil {
+		r.Handle("/*", ui)
+		logger.Info("web UI mounted at /")
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -176,13 +185,13 @@ func initStore(ctx context.Context, logger *slog.Logger, cfg config.Config) (sto
 	return store.NewPostgres(pool), pool, pool.Close
 }
 
-func newGRPCServer(st store.Store, p *kafka.Producer, v *auth.Verifier) *grpc.Server {
+func newGRPCServer(st store.Store, p *kafka.Producer, v *auth.Verifier, bus *events.Bus) *grpc.Server {
 	g := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.UnaryInterceptor(v.UnaryInterceptor()),
 		grpc.StreamInterceptor(v.StreamInterceptor()),
 	)
-	pb.RegisterSightingServiceServer(g, grpcsvc.New(st, p))
+	pb.RegisterSightingServiceServer(g, grpcsvc.New(st, p, bus))
 	reflection.Register(g)
 	return g
 }

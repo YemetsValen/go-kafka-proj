@@ -14,3 +14,7 @@ tmp/
 coverage.out
 .DS_Store
 proto/buf.lock
+web/node_modules
+web/dist
+internal/web/dist/*
+!internal/web/dist/.gitkeep
