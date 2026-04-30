@@ -1,0 +1,16 @@
+.git
+.github
+.golangci.yml
+.env
+.env.example
+*.md
+docker-compose.yml
+Dockerfile
+.dockerignore
+bin/
+tmp/
+*.test
+*.out
+coverage.out
+.DS_Store
+proto/buf.lock

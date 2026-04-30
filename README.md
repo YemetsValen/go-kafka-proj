@@ -115,22 +115,70 @@ Config is parsed by [`kelseyhightower/envconfig`](https://github.com/kelseyhight
 
 ## Running locally
 
-Start Kafka and Postgres:
+There are two ways to run the stack:
+
+### A. Everything in Docker (`app` profile)
+
+Builds the multi-stage `Dockerfile` and brings up server, consumer, Kafka and Postgres in one shot:
 
 ```bash
-docker compose up -d
+docker compose --profile app up --build
 ```
 
-Run the server with Postgres:
+The server is reachable on `localhost:8080` (HTTP), `localhost:9090` (gRPC), `localhost:9100` (`/metrics`); the consumer's `/metrics` is exposed on `localhost:9101`. Auth is enabled with the dev API key `dev` (`Authorization: Bearer dev`).
+
+### B. Hot-reload Go locally, infra in Docker
+
+Start the infrastructure only:
+
+```bash
+docker compose up -d kafka postgres
+```
+
+Then run the binaries from source:
 
 ```bash
 DATABASE_URL=postgres://wildlife:wildlife@localhost:5432/wildlife?sslmode=disable \
   go run ./cmd/server
+
+# in another shell
+DATABASE_URL=postgres://wildlife:wildlife@localhost:5432/wildlife?sslmode=disable \
+METRICS_ADDR=:9101 \
+  go run ./cmd/consumer
 ```
 
 Migrations run automatically at startup (goose, embedded SQL).
 
 Without `DATABASE_URL` the server starts with an in-memory store — handy for quick demos, but state is lost on restart.
+
+### Docker images
+
+The repo ships a single multi-stage `Dockerfile` with two final targets:
+
+```bash
+docker build --target server   -t go-kafka-proj-server   .
+docker build --target consumer -t go-kafka-proj-consumer .
+```
+
+Both produce ~25 MB images on top of `gcr.io/distroless/static-debian12:nonroot` (static-linked, no shell, runs as `nonroot`).
+
+Released images are published automatically to GHCR on every `v*.*.*` tag — see [Releases](#releases) below.
+
+### Releases
+
+`.github/workflows/release.yml` builds and pushes both images to GHCR on tag pushes that match `v*.*.*` (also available as a manual `workflow_dispatch`). Images are multi-arch (`linux/amd64`, `linux/arm64`):
+
+- `ghcr.io/yemetsvalen/go-kafka-proj-server:<tag>`
+- `ghcr.io/yemetsvalen/go-kafka-proj-consumer:<tag>`
+
+Tags applied per release: full SemVer (`v1.2.3`), major.minor (`1.2`), major (`1`), commit SHA (`sha-abcdef0`).
+
+Cut a release:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ### gRPC quickstart
 

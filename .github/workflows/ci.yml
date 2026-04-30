@@ -106,3 +106,31 @@ jobs:
             git --no-pager diff -- gen/
             exit 1
           fi
+
+  docker:
+    name: docker (smoke build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build server image (single arch, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: server
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
+
+      - name: build consumer image (single arch, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: consumer
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=consumer
+          cache-to: type=gha,mode=max,scope=consumer
