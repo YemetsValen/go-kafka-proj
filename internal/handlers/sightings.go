@@ -29,14 +29,22 @@ func New(s store.Store, p Publisher) *Handler {
 	return &Handler{store: s, producer: p}
 }
 
-func (h *Handler) Routes() chi.Router {
+// Routes builds the chi router for sightings. authMiddleware is wrapped only
+// around mutating endpoints (POST/PUT). Pass nil to skip auth entirely (dev).
+func (h *Handler) Routes(authMiddleware func(http.Handler) http.Handler) chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.List)
 	r.Get("/{id}", h.Get)
-	r.Post("/", h.Create)
-	r.Post("/{id}/notes", h.AddNote)
-	r.Put("/{id}", h.Update)
-	r.Put("/{id}/verify", h.Verify)
+
+	r.Group(func(r chi.Router) {
+		if authMiddleware != nil {
+			r.Use(authMiddleware)
+		}
+		r.Post("/", h.Create)
+		r.Post("/{id}/notes", h.AddNote)
+		r.Put("/{id}", h.Update)
+		r.Put("/{id}/verify", h.Verify)
+	})
 	return r
 }
 

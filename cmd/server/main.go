@@ -12,6 +12,7 @@ import (
 	"time"
 
 	pb "github.com/YemetsValen/go-kafka-proj/gen/go/sightings/v1"
+	"github.com/YemetsValen/go-kafka-proj/internal/auth"
 	"github.com/YemetsValen/go-kafka-proj/internal/db"
 	"github.com/YemetsValen/go-kafka-proj/internal/grpcsvc"
 	"github.com/YemetsValen/go-kafka-proj/internal/handlers"
@@ -40,8 +41,16 @@ func main() {
 	st, closeStore := initStore(dsn)
 	defer closeStore()
 
+	verifier := auth.New(auth.Config{
+		JWTSecret: os.Getenv("AUTH_JWT_SECRET"),
+		APIKeys:   splitNonEmpty(os.Getenv("AUTH_API_KEYS")),
+	})
+	if !verifier.Enabled() {
+		log.Printf("WARNING: auth is DISABLED — set AUTH_JWT_SECRET or AUTH_API_KEYS to enable")
+	}
+
 	httpHandler := handlers.New(st, producer)
-	grpcServer := newGRPCServer(st, producer)
+	grpcServer := newGRPCServer(st, producer, verifier)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -54,7 +63,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	r.Mount("/sightings", httpHandler.Routes())
+	r.Mount("/sightings", httpHandler.Routes(verifier.HTTPMiddleware()))
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -116,8 +125,11 @@ func initStore(dsn string) (store.Store, func()) {
 	return store.NewPostgres(pool), pool.Close
 }
 
-func newGRPCServer(st store.Store, p *kafka.Producer) *grpc.Server {
-	g := grpc.NewServer()
+func newGRPCServer(st store.Store, p *kafka.Producer, v *auth.Verifier) *grpc.Server {
+	g := grpc.NewServer(
+		grpc.UnaryInterceptor(v.UnaryInterceptor()),
+		grpc.StreamInterceptor(v.StreamInterceptor()),
+	)
 	pb.RegisterSightingServiceServer(g, grpcsvc.New(st, p))
 	reflection.Register(g)
 	return g
@@ -128,4 +140,19 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func splitNonEmpty(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

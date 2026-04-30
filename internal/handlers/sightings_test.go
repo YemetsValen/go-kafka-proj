@@ -58,7 +58,7 @@ func setup(t *testing.T) (http.Handler, *store.Memory, *mockPublisher) {
 	s := store.NewMemory()
 	pub := newMockPublisher()
 	h := New(s, pub)
-	return h.Routes(), s, pub
+	return h.Routes(nil), s, pub
 }
 
 func doJSON(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
